@@ -5,6 +5,8 @@ use image::imageops::FilterType;
 use image::io::Reader as ImageReader;
 use image::{ImageBuffer, ImageFormat, Rgb};
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
+use serde::{Deserialize, Serialize};
+// use serde::{self, Deserialize, Serialize};
 // use image_compare::Algorithm;
 use std::fs::read;
 use std::io::{BufReader, Cursor};
@@ -13,10 +15,23 @@ use tauri::api::dir::read_dir;
 
 const IMAGE_SIZE: u32 = 512;
 
+#[derive(Debug)]
 struct ComparableImage {
     name: String,
     path: String,
     image: ImageBuffer<Rgb<u8>, Vec<u8>>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct SentImageData {
+    name: String,
+    path: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct SentImageComparison {
+    images: (SentImageData, SentImageData),
+    score: f64,
 }
 
 // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
@@ -79,12 +94,21 @@ async fn set_directory(window: tauri::Window, directory: String) -> Result<(), S
                 let res = image_compare::rgb_hybrid_compare(&outer_image.image, &inner_image.image)
                     .expect("Failed to compare images");
 
-                let score_string = format!(
-                    "Score for {} and {} is {}",
-                    outer_image.name, inner_image.name, res.score
-                );
+                let image_data = SentImageComparison {
+                    score: res.score,
+                    images: (
+                        SentImageData {
+                            name: outer_image.name.clone(),
+                            path: outer_image.path.clone(),
+                        },
+                        SentImageData {
+                            name: inner_image.name.clone(),
+                            path: inner_image.path.clone(),
+                        },
+                    ),
+                };
 
-                window.emit("score", score_string).unwrap();
+                window.emit("score", image_data).unwrap();
             }
         }
     });
