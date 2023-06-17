@@ -9,13 +9,13 @@ use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::fs::read;
 use std::io::{BufReader, Cursor};
 use std::thread;
-use tauri::api::dir::{read_dir, DiskEntry};
+use tauri::api::dir::read_dir;
 
 const IMAGE_SIZE: u32 = 512;
 
 struct ComparableImage {
     name: String,
-    file: DiskEntry,
+    path: String,
     image: ImageBuffer<Rgb<u8>, Vec<u8>>,
 }
 
@@ -34,15 +34,15 @@ async fn set_directory(window: tauri::Window, directory: String) -> Result<(), S
 
         let output: Vec<ComparableImage> = files
             .into_par_iter()
-            .map(|file| {
-                if let Some(file_name) = &file.name {
+            .map(|image_file| {
+                if let Some(file_name) = &image_file.name {
                     let format = supported
                         .iter()
                         .find(|(end_str, _)| file_name.to_lowercase().ends_with(end_str));
                     if let Some((_, image_format)) = format {
-                        println!("Checking file: {:?}", &file.path.as_os_str());
+                        println!("Checking file: {:?}", &image_file.path.as_os_str());
 
-                        let data = read(&file.path).expect("Failed to read image");
+                        let data = read(&image_file.path).expect("Failed to read image");
                         let image = ImageReader::with_format(
                             BufReader::new(Cursor::new(&data)),
                             *image_format,
@@ -54,7 +54,7 @@ async fn set_directory(window: tauri::Window, directory: String) -> Result<(), S
 
                         Some(ComparableImage {
                             name: file_name.clone(),
-                            file,
+                            path: image_file.path.as_os_str().to_string_lossy().to_string(),
                             image,
                         })
                     } else {
