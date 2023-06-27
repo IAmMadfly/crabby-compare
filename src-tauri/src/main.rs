@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 // use image_compare::Algorithm;
 use std::fs::read;
 use std::io::{BufReader, Cursor};
+use std::sync::mpsc;
 use std::thread;
 use tauri::api::dir::read_dir;
 
@@ -23,14 +24,22 @@ struct ComparableImage {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-struct SentImageData {
+struct Comparison {
+    #[serde(rename = "baseImage")]
+    base_image: ImageData,
+    images: Vec<ImageDataScored>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct ImageData {
     name: String,
     path: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-struct SentImageComparison {
-    images: (SentImageData, SentImageData),
+struct ImageDataScored {
+    #[serde(rename = "imageData")]
+    image_data: ImageData,
     score: f64,
 }
 
@@ -44,71 +53,69 @@ fn greet(name: &str) -> String {
 async fn set_directory(window: tauri::Window, directory: String) -> Result<(), String> {
     let files = read_dir(directory, true).map_err(|_| "Invalid Dir")?;
 
+    let supported = [(".png", ImageFormat::Png), (".jpg", ImageFormat::Jpeg)];
+    let (tx, rx) = mpsc::channel::<ComparableImage>();
+
     thread::spawn(move || {
-        let supported = [(".png", ImageFormat::Png), (".jpg", ImageFormat::Jpeg)];
+        let mut vec: Vec<ComparableImage> = Vec::new();
 
-        let output: Vec<ComparableImage> = files
-            .into_par_iter()
-            .map(|image_file| {
-                if let Some(file_name) = &image_file.name {
-                    let format = supported
-                        .iter()
-                        .find(|(end_str, _)| file_name.to_lowercase().ends_with(end_str));
-                    if let Some((_, image_format)) = format {
-                        println!("Checking file: {:?}", &image_file.path.as_os_str());
+        for comparison in rx.iter() {
+            println!("Comparing image ({}): {}", vec.len(), &comparison.name);
 
-                        let data = read(&image_file.path).expect("Failed to read image");
-                        let image = ImageReader::with_format(
-                            BufReader::new(Cursor::new(&data)),
-                            *image_format,
-                        )
+            let mut image_comparison = Comparison {
+                base_image: ImageData {
+                    name: comparison.name.clone(),
+                    path: comparison.path.clone(),
+                },
+                images: Vec::with_capacity(vec.len()),
+            };
+
+            for older_comparison in &vec {
+                let res =
+                    image_compare::rgb_hybrid_compare(&comparison.image, &older_comparison.image)
+                        .expect("Failed to compare images");
+
+                let score = ImageDataScored {
+                    image_data: ImageData {
+                        name: older_comparison.name.clone(),
+                        path: older_comparison.path.clone(),
+                    },
+                    score: res.score,
+                };
+
+                image_comparison.images.push(score);
+            }
+
+            vec.insert(0, comparison);
+
+            window.emit("score", image_comparison).unwrap();
+        }
+    });
+
+    files.into_par_iter().for_each_with(tx, |s, file| {
+        if let Some(file_name) = &file.name {
+            let format = supported
+                .iter()
+                .find(|(end_str, _)| file_name.to_lowercase().ends_with(end_str));
+            if let Some((_, image_format)) = format {
+                println!("Checking file: {:?}", &file.path.as_os_str());
+
+                let data = read(&file.path).expect("Failed to read image");
+                let image =
+                    ImageReader::with_format(BufReader::new(Cursor::new(&data)), *image_format)
                         .decode()
                         .expect("Failed to decode")
                         .resize_exact(IMAGE_SIZE, IMAGE_SIZE, FilterType::CatmullRom)
                         .into_rgb8();
 
-                        Some(ComparableImage {
-                            name: file_name.clone(),
-                            path: image_file.path.as_os_str().to_string_lossy().to_string(),
-                            image,
-                        })
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-            .filter(|maybe_image| maybe_image.is_some())
-            .map(|certain_image| certain_image.expect("Somehow didn't get an image"))
-            .collect();
-
-        let enumerated_output: Vec<_> = output
-            .into_iter()
-            .enumerate()
-            .map(|(i, img)| (img, i))
-            .collect();
-
-        for (outer_image, outer_i) in &enumerated_output {
-            for (inner_image, _) in &enumerated_output[outer_i + 1..] {
-                let res = image_compare::rgb_hybrid_compare(&outer_image.image, &inner_image.image)
-                    .expect("Failed to compare images");
-
-                let image_data = SentImageComparison {
-                    score: res.score,
-                    images: (
-                        SentImageData {
-                            name: outer_image.name.clone(),
-                            path: outer_image.path.clone(),
-                        },
-                        SentImageData {
-                            name: inner_image.name.clone(),
-                            path: inner_image.path.clone(),
-                        },
-                    ),
+                let comparable = ComparableImage {
+                    name: file_name.clone(),
+                    path: file.path.as_os_str().to_string_lossy().to_string(),
+                    image,
                 };
 
-                window.emit("score", image_data).unwrap();
+                s.send(comparable)
+                    .expect("Failed to send image through channel");
             }
         }
     });

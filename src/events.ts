@@ -5,15 +5,21 @@ type ImageData = {
   path: string;
 };
 
-export type Comparison = {
-  images: [ImageData, ImageData];
+type ImageDataScored = {
   score: number;
+  imageData: ImageData;
+};
+
+export type Comparison = {
+  baseImage: ImageData;
+  images: Array<ImageDataScored>;
 };
 
 export function listenForImageComparisons(
   fn: (comparison: Comparison) => void
 ) {
-  listen("score", (ev) => {
-    fn(ev.payload as Comparison);
+  listen<Comparison>("score", (ev) => {
+    console.log("SCORE EVENT");
+    fn(ev.payload);
   });
 }
