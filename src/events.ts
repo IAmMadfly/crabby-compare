@@ -1,11 +1,11 @@
 import { listen } from "@tauri-apps/api/event";
 
-type ImageData = {
+export type ImageData = {
   name: string;
   path: string;
 };
 
-type ImageDataScored = {
+export type ImageDataScored = {
   score: number;
   imageData: ImageData;
 };

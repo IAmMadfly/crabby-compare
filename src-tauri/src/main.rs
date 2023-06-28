@@ -56,7 +56,7 @@ async fn set_directory(window: tauri::Window, directory: String) -> Result<(), S
     let supported = [(".png", ImageFormat::Png), (".jpg", ImageFormat::Jpeg)];
     let (tx, rx) = mpsc::channel::<ComparableImage>();
 
-    thread::spawn(move || {
+    let compare_thread = thread::spawn(move || {
         let mut vec: Vec<ComparableImage> = Vec::new();
 
         for comparison in rx.iter() {
@@ -119,6 +119,10 @@ async fn set_directory(window: tauri::Window, directory: String) -> Result<(), S
             }
         }
     });
+
+    compare_thread
+        .join()
+        .map_err(|_| String::from("Failed to join thread"))?;
 
     Ok(())
 }
